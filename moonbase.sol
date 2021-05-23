@@ -1,13 +1,11 @@
 /**  
 
    MOONBASE features:
-   No function to change fees by the owner once deployed
+   Total: 210M tokens
+   Limit cap to change fees by the owner once deployed
    2% fee auto add to the liquidity pool
    8% fee auto distribute to all holders
-   50% Supply will be burned
-   10% Dedicated to Pancake Swap if needed
    Initial LP Token Lock
-   The rest of the remaining supply will be unlocked in steps to allow liquidity in other exchanges
    MoonBase Token will be used for Dex, NFT minting, author promoting, and paying for decentralized encrypted content storage pinning
    10% of initial supply is in the team control
    It will be used for initial costs of deploying the project and coding an MVP 
@@ -462,22 +460,6 @@ contract Ownable is Context {
     function geUnlockTime() public view returns (uint256) {
         return _lockTime;
     }
-
-    //Locks the contract for owner for the amount of time provided
-    function lock(uint256 time) public virtual onlyOwner {
-        _previousOwner = _owner;
-        _owner = address(0);
-        _lockTime = now + time;
-        emit OwnershipTransferred(_owner, address(0));
-    }
-    
-    //Unlocks the contract for owner when _lockTime is exceeds
-    function unlock() public virtual {
-        require(_previousOwner == msg.sender, "You don't have permission to unlock");
-        require(now > _lockTime , "Contract is locked until 7 days");
-        emit OwnershipTransferred(_owner, _previousOwner);
-        _owner = _previousOwner;
-    }
 }
 
 // pragma solidity >=0.5.0;
@@ -708,7 +690,7 @@ contract MoonBase is Context, IERC20, Ownable {
     address[] private _excluded;
    
     uint256 private constant MAX = ~uint256(0);
-    uint256 private _tTotal = 1000000000 * 10**6 * 10**9;
+    uint256 private _tTotal = 210 * 10**6 * 10**9;
     uint256 private _rTotal = (MAX - (MAX % _tTotal));
     uint256 private _tFeeTotal;
 
@@ -722,21 +704,29 @@ contract MoonBase is Context, IERC20, Ownable {
     uint256 public _liquidityFee = 2;
     uint256 private _previousLiquidityFee = _liquidityFee;
 
-    IUniswapV2Router02 public immutable uniswapV2Router;
-    address public immutable uniswapV2Pair;
+    IUniswapV2Router02 public uniswapV2Router;
+    address public uniswapV2Pair;
     
     bool inSwapAndLiquify;
     bool public swapAndLiquifyEnabled = true;
     
-    uint256 public _maxTxAmount = 5000000 * 10**6 * 10**9;
-    uint256 private numTokensSellToAddToLiquidity = 500000 * 10**6 * 10**9;
-    
+    uint256 public _maxTxAmount = 90 * 10**6 * 10**9;
+    uint256 private numTokensSellToAddToLiquidity = 5 * 10**3 * 10**9;
+
+    event TaxFeeUpdated(uint256 taxFee);
+    event LiquidityFeeUpdated(uint256 liquidityFee);
+    event ExcludeFromRewardUpdated(address account);
+    event IncludeInRewardUpdated(address account);
+    event ExcludeFromFeeUpdated(address account);
+    event IncludeInFeeUpdated(address account);
+    event MaxTxAmountUpdated(uint _maxTxAmount);
     event MinTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap);
     event SwapAndLiquifyEnabledUpdated(bool enabled);
+    event NumTokensSellToAddToLiquidityUpdated(uint256 _numTokensSellToAddToLiquidity);
     event SwapAndLiquify(
         uint256 tokensSwapped,
         uint256 ethReceived,
-        uint256 tokensIntoLiqudity
+        uint256 tokensIntoLiquidity
     );
     
     modifier lockTheSwap {
@@ -748,7 +738,7 @@ contract MoonBase is Context, IERC20, Ownable {
     constructor () public {
         _rOwned[_msgSender()] = _rTotal;
         
-        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x05fF2B0DB69458A0750badebc4f9e13aDd608C7F);
+        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x10ED43C718714eb63d5aA57B78B54704E256024E);
          // Create a uniswap pair for this new token
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
             .createPair(address(this), _uniswapV2Router.WETH());
@@ -822,15 +812,6 @@ contract MoonBase is Context, IERC20, Ownable {
         return _tFeeTotal;
     }
 
-    function deliver(uint256 tAmount) public {
-        address sender = _msgSender();
-        require(!_isExcluded[sender], "Excluded addresses cannot call this function");
-        (uint256 rAmount,,,,,) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _rTotal = _rTotal.sub(rAmount);
-        _tFeeTotal = _tFeeTotal.add(tAmount);
-    }
-
     function reflectionFromToken(uint256 tAmount, bool deductTransferFee) public view returns(uint256) {
         require(tAmount <= _tTotal, "Amount must be less than supply");
         if (!deductTransferFee) {
@@ -888,13 +869,40 @@ contract MoonBase is Context, IERC20, Ownable {
     function includeInFee(address account) public onlyOwner {
         _isExcludedFromFee[account] = false;
     }
+
+    // All setter functions now have caps to limit risks
+    function setTaxFeePercent(uint256 taxFee) external onlyOwner {
+        require(taxFee <= 15, "Amount must be less than or equal to 15");
+        _taxFee = taxFee;
+        emit TaxFeeUpdated(taxFee);
+    }
+
+    function setLiquidityFeePercent(uint256 liquidityFee) external onlyOwner {
+        require(liquidityFee <= 15, "Amount must be less than or equal to 15");
+        _liquidityFee = liquidityFee;
+        emit LiquidityFeeUpdated(liquidityFee);
+    }
+
+    function setMaxTxPercent(uint256 maxTxPercent) external onlyOwner {
+        require(maxTxPercent > 0, "Amount must be greater than 0");
+        _maxTxAmount = _tTotal.mul(maxTxPercent).div(
+            10**2
+        );
+        emit MaxTxAmountUpdated(_maxTxAmount);
+    }
    
     function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner {
         swapAndLiquifyEnabled = _enabled;
         emit SwapAndLiquifyEnabledUpdated(_enabled);
     }
+
+    //to change the number of tokens to sell to add to liquidity to avoid future risks if the price rises too much
+    function setNumTokensSellToAddToLiquidity(uint256 _numTokensSellToAddToLiquidity) external onlyOwner {
+      numTokensSellToAddToLiquidity = _numTokensSellToAddToLiquidity;
+      emit NumTokensSellToAddToLiquidityUpdated(_numTokensSellToAddToLiquidity);
+    }
     
-     //to recieve ETH from uniswapV2Router when swaping
+     //to receive ETH from uniswapV2Router when swapping
     receive() external payable {}
 
     function _reflectFee(uint256 rFee, uint256 tFee) private {
@@ -1056,6 +1064,13 @@ contract MoonBase is Context, IERC20, Ownable {
         emit SwapAndLiquify(half, newBalance, otherHalf);
     }
 
+    // Change router in the future if there's any problem with it
+    function setRouterAddress(address newRouter) public onlyOwner() {
+        IUniswapV2Router02 _newPancakeRouter = IUniswapV2Router02(newRouter);
+        uniswapV2Pair = IUniswapV2Factory(_newPancakeRouter.factory()).createPair(address(this), _newPancakeRouter.WETH());
+        uniswapV2Router = _newPancakeRouter;
+    }
+
     function swapTokensForEth(uint256 tokenAmount) private {
         // generate the uniswap pair path of token -> weth
         address[] memory path = new address[](2);
@@ -1078,13 +1093,13 @@ contract MoonBase is Context, IERC20, Ownable {
         // approve token transfer to cover all possible scenarios
         _approve(address(this), address(uniswapV2Router), tokenAmount);
 
-        // add the liquidity
+        // add the liquidity, assign to address 0 to avoid centralized risks involving this LP
         uniswapV2Router.addLiquidityETH{value: ethAmount}(
             address(this),
             tokenAmount,
             0, 
             0, 
-            owner(),
+            address(0),
             block.timestamp
         );
     }
@@ -1137,5 +1152,13 @@ contract MoonBase is Context, IERC20, Ownable {
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
+    // Functions to withdraw tokens and BNB from the SC 
+    function withdrawBNBSentToContractAddress() external onlyOwner()  {
+        _msgSender().transfer(address(this).balance);
+    }
+
+    function withdrawBEP20SentToContractAddress(IERC20 tokenToWithdraw) external onlyOwner()  {
+        tokenToWithdraw.transfer(_msgSender(), tokenToWithdraw.balanceOf(address(this)));
+    }
 
 }
